@@ -91,3 +91,5 @@ Note
 {% endfor %}
 {% endif %}
 {% endpersist %}
+
+{# Maintainer notes: _custom/README-template.md. Reader-link background: _custom/README-open-in-zotero-reader.md #}
