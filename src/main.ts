@@ -1,8 +1,15 @@
 import Fuse from 'fuse.js';
-import { EditableFileView, Events, Plugin, TFile } from 'obsidian';
+import { EditableFileView, Events, Notice, Plugin, TFile } from 'obsidian';
 import { shellPath } from 'shell-path';
 
 import { DataExplorerView, viewType } from './DataExplorerView';
+import { confirm, pickExportFormat } from './ImportAllModals';
+import {
+  ImportAllResult,
+  LibraryCiteKeys,
+  importAllItems,
+  listAllLibraryCiteKeys,
+} from './bbt/importAll';
 import { LoadingModal } from './bbt/LoadingModal';
 import { getCAYW } from './bbt/cayw';
 import { exportToMarkdown, renderCiteTemplate } from './bbt/export';
@@ -66,6 +73,8 @@ export default class ZoteroConnector extends Plugin {
   settings: ZoteroConnectorSettings;
   emitter: Events;
   fuse: Fuse<CiteKeyExport>;
+  private importAllRunning = false;
+  private importAllCancelRequested = false;
 
   async onload() {
     await this.loadSettings();
@@ -119,6 +128,12 @@ export default class ZoteroConnector extends Plugin {
           })
           .then((notes) => this.openNotes(notes));
       },
+    });
+
+    this.addCommand({
+      id: 'zdc-import-all',
+      name: 'Import all items (all libraries)',
+      callback: () => this.importAllCommand(),
     });
 
     this.addCommand({
@@ -213,6 +228,157 @@ export default class ZoteroConnector extends Plugin {
     (this.app as any).commands.removeCommand(
       `${commandPrefix}${exportCommandIDPrefix}${format.name}`
     );
+  }
+
+  /**
+   * Interactive "Import all items": pick a format, confirm, run with a
+   * progress notice. Running the command again while an import is in
+   * progress offers to cancel it.
+   */
+  async importAllCommand() {
+    if (this.importAllRunning) {
+      const stop = await confirm(
+        this.app,
+        'Import all items is running',
+        ['Stop after the current batch?'],
+        'Stop import'
+      );
+      if (stop) this.importAllCancelRequested = true;
+      return;
+    }
+
+    if (!this.settings.exportFormats.length) {
+      new Notice('Zotero Integration: no import format configured.');
+      return;
+    }
+
+    const format = await pickExportFormat(
+      this.app,
+      this.settings.exportFormats
+    );
+    if (!format) return;
+
+    const database = {
+      database: this.settings.database,
+      port: this.settings.port,
+    };
+    const libraries = await listAllLibraryCiteKeys(database);
+    if (!libraries) {
+      new Notice('Zotero Integration: could not list the Zotero libraries.');
+      return;
+    }
+
+    const total = libraries.reduce((n, l) => n + l.citeKeys.length, 0);
+    const ok = await confirm(
+      this.app,
+      'Import all Zotero items?',
+      [
+        `${total} items in ${libraries.length} ${
+          libraries.length === 1 ? 'library' : 'libraries'
+        } (${libraries
+          .map((l) => `${l.name}: ${l.citeKeys.length}`)
+          .join(', ')}) will be imported with the format "${format.name}".`,
+        `Existing notes at the same paths are updated like a normal re-import ` +
+          `(content outside persist blocks is regenerated).`,
+        `This can take a while. Run the command again to stop the import.`,
+      ],
+      'Import all'
+    );
+    if (!ok) return;
+
+    await this.importAll(format.name, true, libraries);
+  }
+
+  /**
+   * Imports every item of every library with the given import format, without
+   * any Zotero picker. Usable from scripts:
+   *   app.plugins.plugins['obsidian-zotero-desktop-connector'].importAll('My format')
+   *
+   * @param libraries  pre-fetched citekey lists (from listAllLibraryCiteKeys);
+   *                   fetched here if omitted
+   */
+  async importAll(
+    formatName: string,
+    showProgress = true,
+    libraries?: LibraryCiteKeys[]
+  ): Promise<ImportAllResult | null> {
+    const format = this.settings.exportFormats.find(
+      (f) => f.name === formatName
+    );
+    if (!format) {
+      throw new Error(`Error: Import format "${formatName}" not found`);
+    }
+    if (this.importAllRunning) {
+      new Notice('Zotero Integration: an import-all is already running.');
+      return null;
+    }
+
+    const database = {
+      database: this.settings.database,
+      port: this.settings.port,
+    };
+
+    this.importAllRunning = true;
+    this.importAllCancelRequested = false;
+    const notice = showProgress
+      ? new Notice('Zotero Integration: listing Zotero items…', 0)
+      : null;
+
+    try {
+      const libs = libraries ?? (await listAllLibraryCiteKeys(database));
+      if (!libs) {
+        new Notice('Zotero Integration: could not list the Zotero libraries.');
+        return null;
+      }
+
+      const result = await importAllItems(
+        { settings: this.settings, database, exportFormat: format },
+        libs,
+        {
+          isCancelled: () => this.importAllCancelRequested,
+          onProgress: (p) =>
+            notice?.setMessage(
+              `Zotero Integration: importing "${p.library}" ` +
+                `(${p.libraryIndex + 1}/${p.libraryCount}): ${p.done}/${p.total}`
+            ),
+        }
+      );
+
+      const summary = [
+        `Zotero Integration: import all ${
+          result.aborted
+            ? 'aborted: the first items all failed (check the template and that Zotero is running)'
+            : result.cancelled
+            ? 'stopped'
+            : 'finished'
+        }.`,
+        `${result.written} notes written for ${result.requested} items.`,
+      ];
+      if (result.failed.length) {
+        summary.push(
+          `${result.failed.length} failed (see developer console).`
+        );
+        console.warn('Zotero Integration: failed citekeys', result.failed);
+      }
+      if (result.duplicateCiteKeys.length) {
+        summary.push(
+          `${result.duplicateCiteKeys.length} citekeys exist in several libraries ` +
+            `and may share one note (see developer console).`
+        );
+        console.warn(
+          'Zotero Integration: citekeys in several libraries',
+          result.duplicateCiteKeys
+        );
+      }
+
+      if (showProgress) new Notice(summary.join(' '), 15000);
+
+      return result;
+    } finally {
+      notice?.hide();
+      this.importAllRunning = false;
+      this.importAllCancelRequested = false;
+    }
   }
 
   async runImport(name: string, citekey: string, library: number = 1) {
