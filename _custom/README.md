@@ -86,9 +86,10 @@ Last updated: 2026-11-07.
 | File | Change |
 | --- | --- |
 | `src/bbt/importAll.ts` (new) | core logic: `listAllLibraryCiteKeys`, `importAllItems`, `findDuplicateCiteKeys` |
-| `src/ImportAllModals.ts` (new) | `pickExportFormat` (fuzzy picker), `confirm` (OK/Cancel modal) |
+| `src/ImportAllModals.ts` (new) | `pickExportFormat` (fuzzy picker), `confirm` (OK/Cancel modal; OK has focus, so Enter confirms) |
 | `src/bbt/LoadingModal.ts` | static `suppress()` / `unsuppress()`. `open`/`close` become no-ops while suppressed |
-| `src/main.ts` | command `zdc-import-all`, `importAllCommand()`, scriptable `importAll(formatName, showProgress?, libraries?)`, two state flags |
+| `src/main.ts` | command `zdc-import-all`, `importAllCommand()`, `confirmImportAll()`, scriptable `importAll(formatName, showProgress?, libraries?)`, two state flags, default `confirmImportAll: true` |
+| `src/types.ts`, `src/settings/settings.tsx` | setting `confirmImportAll` (toggle "Confirm Before Importing All Items" under General Settings) |
 | `src/bbt/tests/importAll.test.ts` (new) | jest tests: batching, probe, retry, abort, cancel, duplicates |
 
 ---
@@ -420,6 +421,12 @@ the visible link text.
    - Otherwise: `pickExportFormat` (skipped if there's only one format), then
      `listAllLibraryCiteKeys`, then a `confirm` dialog with counts per
      library, then `importAll(format.name, true, libraries)`.
+   - The confirmation dialog is optional: setting `confirmImportAll`
+     (Settings → General Settings → "Confirm Before Importing All Items",
+     default on). When off, the import starts right after the format is
+     chosen. The "Stop import" dialog is always shown.
+   - In every `confirm` dialog the confirm button (not Cancel) has focus,
+     so Enter confirms and Escape cancels.
 2. `importAll(formatName, showProgress = true, libraries?)`:
    - Guards against overlapping runs (`importAllRunning`).
    - Shows a persistent progress `Notice` (`setMessage`), hidden in
@@ -568,7 +575,9 @@ yarn build           # → main.js; copy main.js, manifest.json, styles.css to <
 **Import all:**
 1. Zotero closed: "could not list the Zotero libraries".
 2. One format: no picker. Several formats: the picker appears.
-3. Cancelling the confirmation writes nothing.
+3. Cancelling the confirmation writes nothing. Enter in the dialog starts
+   the import. With "Confirm Before Importing All Items" off, no dialog
+   appears.
 4. A deliberately broken template aborts after 3 items.
 5. A normal run: notes land in collection folders, progress updates, and the
    summary appears.

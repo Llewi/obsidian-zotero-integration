@@ -34,7 +34,10 @@ export function pickExportFormat(
   });
 }
 
-/** Simple OK / Cancel dialog. Resolves true on OK. */
+/**
+ * Simple OK / Cancel dialog. Resolves true on OK. The OK button gets focus
+ * when the dialog opens, so Enter confirms (Escape still cancels).
+ */
 export function confirm(
   app: App,
   title: string,
@@ -49,19 +52,25 @@ export function confirm(
         this.titleEl.setText(title);
         for (const line of body) this.contentEl.createEl('p', { text: line });
 
+        let okButton: HTMLButtonElement | null = null;
         new Setting(this.contentEl)
           .addButton((b) =>
             b.setButtonText('Cancel').onClick(() => this.close())
           )
-          .addButton((b) =>
-            b
-              .setButtonText(okText)
+          .addButton((b) => {
+            okButton = b.buttonEl;
+            b.setButtonText(okText)
               .setCta()
               .onClick(() => {
                 result = true;
                 this.close();
-              })
-          );
+              });
+          });
+
+        // Focus the OK button so Enter triggers it natively. Deferred because
+        // Obsidian moves focus into the modal container after onOpen.
+        okButton?.focus();
+        window.setTimeout(() => okButton?.focus(), 0);
       }
       onClose() {
         this.contentEl.empty();

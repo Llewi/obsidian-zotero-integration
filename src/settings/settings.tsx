@@ -51,6 +51,10 @@ function SettingsComponent({
 
   const [concat, setConcat] = React.useState(!!settings.shouldConcat);
 
+  const [confirmImportAll, setConfirmImportAll] = React.useState(
+    settings.confirmImportAll !== false
+  );
+
   const updateCite = React.useCallback(
     debounce(
       (index: number, format: CitationFormat) => {
@@ -220,6 +224,22 @@ function SettingsComponent({
             });
           }}
           className={`checkbox-container${concat ? ' is-enabled' : ''}`}
+        />
+      </SettingItem>
+      <SettingItem
+        name="Confirm Before Importing All Items"
+        description="Show a confirmation dialog with the item counts before the 'Import all items' command starts. When disabled, the import starts right after the import format is chosen."
+      >
+        <div
+          onClick={() => {
+            setConfirmImportAll((state) => {
+              updateSetting('confirmImportAll', !state);
+              return !state;
+            });
+          }}
+          className={`checkbox-container${
+            confirmImportAll ? ' is-enabled' : ''
+          }`}
         />
       </SettingItem>
       <SettingItem name="Citation Formats" isHeading />

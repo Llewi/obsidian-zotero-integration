@@ -4,12 +4,6 @@ import { shellPath } from 'shell-path';
 
 import { DataExplorerView, viewType } from './DataExplorerView';
 import { confirm, pickExportFormat } from './ImportAllModals';
-import {
-  ImportAllResult,
-  LibraryCiteKeys,
-  importAllItems,
-  listAllLibraryCiteKeys,
-} from './bbt/importAll';
 import { LoadingModal } from './bbt/LoadingModal';
 import { getCAYW } from './bbt/cayw';
 import { exportToMarkdown, renderCiteTemplate } from './bbt/export';
@@ -18,6 +12,12 @@ import {
   insertNotesIntoCurrentDoc,
   noteExportPrompt,
 } from './bbt/exportNotes';
+import {
+  ImportAllResult,
+  LibraryCiteKeys,
+  importAllItems,
+  listAllLibraryCiteKeys,
+} from './bbt/importAll';
 import './bbt/template.helpers';
 import {
   currentVersion,
@@ -46,6 +46,7 @@ const DEFAULT_SETTINGS: ZoteroConnectorSettings = {
   citeSuggestTemplate: '[[{{citekey}}]]',
   openNoteAfterImport: false,
   whichNotesToOpenAfterImport: 'first-imported-note',
+  confirmImportAll: true,
 };
 
 async function fixPath() {
@@ -268,8 +269,20 @@ export default class ZoteroConnector extends Plugin {
       return;
     }
 
+    if (this.settings.confirmImportAll !== false) {
+      const ok = await this.confirmImportAll(format.name, libraries);
+      if (!ok) return;
+    }
+
+    await this.importAll(format.name, true, libraries);
+  }
+
+  private confirmImportAll(
+    formatName: string,
+    libraries: LibraryCiteKeys[]
+  ): Promise<boolean> {
     const total = libraries.reduce((n, l) => n + l.citeKeys.length, 0);
-    const ok = await confirm(
+    return confirm(
       this.app,
       'Import all Zotero items?',
       [
@@ -277,16 +290,13 @@ export default class ZoteroConnector extends Plugin {
           libraries.length === 1 ? 'library' : 'libraries'
         } (${libraries
           .map((l) => `${l.name}: ${l.citeKeys.length}`)
-          .join(', ')}) will be imported with the format "${format.name}".`,
+          .join(', ')}) will be imported with the format "${formatName}".`,
         `Existing notes at the same paths are updated like a normal re-import ` +
           `(content outside persist blocks is regenerated).`,
         `This can take a while. Run the command again to stop the import.`,
       ],
       'Import all'
     );
-    if (!ok) return;
-
-    await this.importAll(format.name, true, libraries);
   }
 
   /**
@@ -339,7 +349,9 @@ export default class ZoteroConnector extends Plugin {
           onProgress: (p) =>
             notice?.setMessage(
               `Zotero Integration: importing "${p.library}" ` +
-                `(${p.libraryIndex + 1}/${p.libraryCount}): ${p.done}/${p.total}`
+                `(${p.libraryIndex + 1}/${p.libraryCount}): ${p.done}/${
+                  p.total
+                }`
             ),
         }
       );
@@ -355,9 +367,7 @@ export default class ZoteroConnector extends Plugin {
         `${result.written} notes written for ${result.requested} items.`,
       ];
       if (result.failed.length) {
-        summary.push(
-          `${result.failed.length} failed (see developer console).`
-        );
+        summary.push(`${result.failed.length} failed (see developer console).`);
         console.warn('Zotero Integration: failed citekeys', result.failed);
       }
       if (result.duplicateCiteKeys.length) {

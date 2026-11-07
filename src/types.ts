@@ -73,6 +73,7 @@ export interface RenderCiteTemplateParams {
 export interface ZoteroConnectorSettings {
   citeFormats: CitationFormat[];
   citeSuggestTemplate?: string;
+  confirmImportAll?: boolean;
   database: Database;
   port?: string;
   exeVersion?: string;
