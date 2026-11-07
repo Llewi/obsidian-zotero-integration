@@ -311,6 +311,95 @@ Cons: the attachment key is fixed at import time. It goes stale if the PDF is
 replaced or deleted in Zotero; re-import the note to refresh it. The link
 opens the **first** PDF only, unless you list them all as shown above.
 
+### Option A in detail: links to annotations (notes inside the PDF)
+
+Only **Option A** stores links at import time. Options B and C look the
+attachment up when you click. Variant A3 below mixes the two.
+
+#### Three kinds of "notes inside the PDF"
+
+| Kind | Where it lives | Link the plugin writes at import | What clicking it does |
+| --- | --- | --- | --- |
+| **Native Zotero annotations** (made in Zotero's reader; `annotation.source == "zotero"`) | Zotero database, with their own annotation key (`annotation.id`) | `annotation.desktopURI` = `open-pdf/…/<attachmentKey>?page=<pageLabel>&annotation=<annotationKey>` (`src/bbt/export.ts:132`) | Opens the reader and should jump to and select that annotation |
+| **Annotations embedded in the PDF file** (Acrobat, Preview, etc., read by `pdfannots2json`; `annotation.source == "pdf"`) | Inside the PDF file; no Zotero key | `annotation.desktopURI` = `open-pdf/…/<attachmentKey>?page=<pageLabel>` (`export.ts:106`) | Opens the reader **at the page only**. Zotero has no ID to jump to the annotation itself |
+| **Zotero notes made from annotations** (rendered in `markdownNotes`) | Note HTML with `data-annotation` references | "Go to annotation" links with `page` and `annotation` added (`src/bbt/exportNotes.ts:87`) | Same as native annotations |
+
+#### Problems in the plugin's own links
+
+1. **Page label passed as the page number.** All three link builders put
+   `pageLabel` (the page number printed on the page, e.g. `245` or `iv`) into
+   `?page=`. Zotero reads `page` as the physical page number
+   (`pageIndex = parseInt(page) - 1`). For journal articles with printed page
+   numbers, or for roman numerals, that is the wrong page or `NaN`.
+   - Native annotations are probably fine, because the `annotation=` key
+     should take priority. I haven't checked how Zotero resolves a page and an
+     annotation key that conflict.
+   - **PDF-embedded annotations are affected**, because the page is all they
+     have. Use the physical page `annotation.page` instead. First check in the
+     Data explorer that `annotation.page` exists for `pdfannots2json`
+     annotations.
+2. **First-page annotations lose their page.** `annot.page` is only set
+   `if (annotationPosition.pageIndex)`, so annotations on page 1 (index 0) get
+   no `page` value (`export.ts:139`).
+3. **No links for EPUB or snapshot annotations.** Native annotations only get
+   a `desktopURI` when the attachment is a `.pdf`. Zotero itself can jump to an
+   annotation in any of its reader formats, so you can build the link in the
+   template:
+   `{{ annotation.attachment.desktopURI | replace("zotero://select", "zotero://open-pdf") }}?annotation={{annotation.id}}`
+4. The plugin's own basic template has the same page-label problem
+   (`applyBasicTemplates.ts:62`), and so do the "Go to annotation" links in
+   imported Zotero notes (`exportNotes.ts:88`).
+
+#### Three ways to store links at import time
+
+| Variant | What you do | Links to annotations | When links go stale |
+| --- | --- | --- | --- |
+| **A1. Template only** | Use `pdfURI` for the item, and per annotation build the link from `annotation.attachment` + `annotation.page` + `annotation.id` (native) or + `annotation.page` (embedded), plus the EPUB/snapshot workaround above | Native: jumps to the annotation. Embedded: page only | The attachment is deleted or replaced. Embedded-annotation pages also break if the PDF file is swapped |
+| **A2. Fix the plugin code** | In `export.ts`, build a reader link for **every** file attachment (not only `.pdf`), use the physical page instead of the page label, and fix the page-1 case. Fix the same in `exportNotes.ts` and the basic template | Same as A1, but correct out of the box for every template | Same as A1 |
+| **A3. Store IDs, resolve when clicked** | At import, write `obsidian://zotero-reader?citekey=…&annotation=<annotationKey>` (or `&page=N` for embedded annotations). The handler from Option B calls `item.attachments(citekey)` and picks the attachment whose `annotations` contain that key | Same jump targets | Doesn't break when a PDF is replaced or the citekey's attachments change. Needs the Option B code, and Zotero must be running |
+
+**Recommendation:** start with **A1**; it's a template change only. Do
+**A2** if you want the page-number and EPUB problems fixed for everyone using
+the plugin. Move to **A3** if your Canvas files need to outlive PDF
+replacements.
+
+#### A1 applied: `_custom/template.md`
+
+The personal import template now stores everything A1 needs:
+
+| Where | What it adds |
+| --- | --- |
+| Frontmatter | `zotero-select`: item select link. `zotero-reader`: reader link to the first PDF, or to the first attachment with a file if there is no PDF (EPUB, snapshot). Properties are meant for Bases/Dataview/Canvas lookups |
+| `[!LINK]` callout | "Show in Zotero" link for the item. For **every** attachment with a file (no longer only PDFs): the existing `file://` link plus "Open in Zotero reader" |
+| Annotations | A `> [p. <label>](…)` link under each annotation. Native: `?page=<physical page>&annotation=<key>` (EPUB/snapshot: `?annotation=<key>` only). Embedded: `?page=<physical page>`. The visible text still shows the printed page label |
+
+How the reader link is built in the template (handles PDF, EPUB and snapshot):
+
+```nunjucks
+{{ att.pdfURI or (att.desktopURI | replace("zotero://select", "zotero://open-pdf")) }}
+```
+
+Caveats for this template:
+
+- **Existing notes don't get the new annotation links automatically.** The
+  annotations section is inside `{% persist "annotations" %}`, and only
+  annotations newer than the last import are rendered. Already imported
+  annotations stay as they are. To add links to old annotations, delete the
+  content between `%% begin annotations %%` and `%% end annotations %%` and
+  re-import. Manual edits in that block are lost. The frontmatter and
+  `[!LINK]` callout are regenerated on every import, so they update at once.
+- The top-level `annotations` variable holds the annotations of the **first
+  attachment that has any** (`getTemplateData`, `export.ts:582`). Annotations
+  on a second PDF of the same item are not shown. Looping over
+  `attachments` → `attachment.annotations` would include them.
+- Note annotations (`type == "text"`) have their text in `a.comment`, not in
+  `a.annotatedText`. The template doesn't render `a.comment`, so a note
+  annotation shows up as an empty quote with only the link. Add
+  `{{a.comment}}` if you want its content.
+- I haven't test-rendered this template (no Node.js in this environment).
+  Check the result on one item with the **Data explorer** first, or by
+  importing a test item.
+
 ### Option B: resolve at click time from the citekey (small plugin feature)
 
 This is useful when the Canvas/Markdown contains only `@citekey` references,

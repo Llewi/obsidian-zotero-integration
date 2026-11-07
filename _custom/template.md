@@ -4,6 +4,11 @@ tags: {% if allTags %}{{allTags}}{% endif %}
 citekey: {{citekey}}
 status: unread
 dateread:
+{%- set readerAtt = (attachments | filterby("path", "endswith", ".pdf") | first) or (attachments | selectattr("path") | first) %}
+zotero-select: "{{desktopURI}}"
+{%- if readerAtt and readerAtt.desktopURI %}
+zotero-reader: "{{ readerAtt.pdfURI or (readerAtt.desktopURI | replace("zotero://select", "zotero://open-pdf")) }}"
+{%- endif %}
 ---
 
 > [!Cite]
@@ -39,8 +44,10 @@ dateread:
 > **ISBN**:: {{ISBN}} {%- endif %}    
 
 > [!LINK] 
-> {%- for attachment in attachments | filterby("path", "endswith", ".pdf") %}
->  [{{attachment.title}}](file://{{attachment.path | replace(" ", "%20")}})  {%- endfor -%}.
+> [Show in Zotero]({{desktopURI}})
+> {%- for attachment in attachments | selectattr("path") %}
+>  [{{attachment.title}}](file://{{attachment.path | replace(" ", "%20")}})
+{%- if attachment.desktopURI %} · [Open in Zotero reader]({{ attachment.pdfURI or (attachment.desktopURI | replace("zotero://select", "zotero://open-pdf")) }}){% endif %}  {%- endfor -%}.
 
 > [!Abstract]
 > {%- if abstractNote %}
@@ -71,8 +78,16 @@ Note
 
 
 {% for a in newAnnotations %}
+{%- set base = a.attachment.pdfURI or (a.attachment.desktopURI | replace("zotero://select", "zotero://open-pdf")) %}
 {{calloutHeader(a.type, a.color)}}
 > {{a.annotatedText}}
+{%- if a.attachment.desktopURI %}
+{%- if a.source == "zotero" %}
+> [p. {{a.pageLabel or a.page or "–"}}]({{base}}?{% if a.page %}page={{a.page}}&{% endif %}annotation={{a.id}})
+{%- else %}
+> [p. {{a.pageLabel or a.page}}]({{base}}{% if a.page %}?page={{a.page}}{% endif %})
+{%- endif %}
+{%- endif %}
 {% endfor %}
 {% endif %}
 {% endpersist %}
