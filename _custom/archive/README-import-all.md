@@ -42,7 +42,7 @@ Each collection has `key`, `name`, and `fullPath`, which is the
 parent-to-child path joined with `/` (`getCollectionFromCiteKey`,
 `src/bbt/jsonRPC.ts:55`).
 
-Current settings (also in [config.md](config.md)):
+Current settings (also in [config.md](../config.md)):
 
 ```nunjucks
 Output path:
